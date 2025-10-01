@@ -6,7 +6,6 @@ import { AiOutlineClose } from "react-icons/ai";
 import { FaUser, FaLock } from "react-icons/fa";
 import Swal from "sweetalert2";
 import withReactContent from "sweetalert2-react-content";
-import { AuthContext } from "./AuthContext"; // adjust path
 
 const MySwal = withReactContent(Swal);
 
@@ -21,6 +20,7 @@ const Login = () => {
     const rememberedEmail = localStorage.getItem("rememberedEmail");
     if (rememberedEmail) {
       setFormData(prev => ({ ...prev, email: rememberedEmail }));
+      setRememberMe(true);
     }
   }, []);
 
@@ -61,21 +61,42 @@ const Login = () => {
     setLoading(true);
 
     try {
+      console.log("Attempting login with:", formData.email);
+      
       const response = await axios.post(
         `${import.meta.env.VITE_API_BASE_URL}/api/login`,
-        { email: formData.email, password: formData.password },
-        { withCredentials: true }
+        { 
+          email: formData.email, 
+          password: formData.password 
+        },
+        { 
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
 
+      console.log("Login response:", response.data);
+
       if (response.data.token) {
-        const { token, role, name } = response.data;
+        const { token, role, name, user } = response.data;
+        
+        // Handle different response structures
+        const userRole = role || user?.role;
+        const userName = name || user?.name || formData.email;
 
-        // Store in localStorage
+        // Store in sessionStorage for security
+        sessionStorage.setItem("token", token);
+        sessionStorage.setItem("role", userRole);
+        sessionStorage.setItem("email", formData.email);
+        sessionStorage.setItem("name", userName);
+
+        // Also store in localStorage for navbar (optional)
         localStorage.setItem("token", token);
-        localStorage.setItem("role", role);
         localStorage.setItem("email", formData.email);
-        localStorage.setItem("name", name || formData.email);
 
+        // Store remembered email in localStorage if checked
         if (rememberMe) {
           localStorage.setItem("rememberedEmail", formData.email);
         } else {
@@ -84,27 +105,59 @@ const Login = () => {
 
         await MySwal.fire({
           icon: "success",
-          title: "Login Successful",
+          title: "Login Successful!",
           text: "Redirecting to your dashboard...",
           timer: 2000,
           showConfirmButton: false,
         });
 
         // Navigate based on role
-        if (role === "admin") navigate("/admin-dashboard");
-        if (role === "student") navigate("/student-dashboard");
+        if (userRole === "admin") {
+          navigate("/admin-dashboard", { replace: true });
+        } else {
+          navigate("/student-dashboard", { replace: true });
+        }
       }
     } catch (err) {
-      const errorMsg = err.response?.data?.message || "Login failed";
-      MySwal.fire({
+      console.error("Login error:", err);
+      
+      let errorMsg = "Login failed. Please try again.";
+      
+      if (err.response) {
+        // Server responded with error status
+        errorMsg = err.response.data?.message || 
+                  err.response.data?.error || 
+                  `Server error: ${err.response.status}`;
+      } else if (err.request) {
+        // Request made but no response received
+        errorMsg = "No response from server. Please check your connection.";
+      }
+      
+      await MySwal.fire({
         icon: "error",
-        title: "Oops...",
+        title: "Login Failed",
         text: errorMsg,
+        confirmButtonColor: "#3085d6",
       });
     } finally {
       setLoading(false);
     }
   };
+
+  // Test API connection
+  const testAPI = async () => {
+    try {
+      const response = await axios.get(`${import.meta.env.VITE_API_BASE_URL}/api/health`);
+      console.log("API health check:", response.data);
+    } catch (error) {
+      console.error("API health check failed:", error);
+    }
+  };
+
+  // Uncomment to test API on component mount
+  // useEffect(() => {
+  //   testAPI();
+  // }, []);
 
   return (
     <motion.div
@@ -234,6 +287,11 @@ const Login = () => {
             >
               Register here
             </button>
+          </div>
+
+          {/* Debug info (remove in production) */}
+          <div className="text-xs text-gray-500 text-center mt-4">
+            API URL: {import.meta.env.VITE_API_BASE_URL}
           </div>
         </div>
       </div>

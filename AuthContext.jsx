@@ -6,97 +6,138 @@ export const AuthContext = createContext();
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [accessToken, setAccessToken] = useState(null);
 
   const BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
+  // Create axios instance with token
   const axiosInstance = axios.create({
     baseURL: `${BASE_URL}/api`,
-    withCredentials: true,
   });
 
-  // Attach token
-  axiosInstance.interceptors.request.use((config) => {
-    if (accessToken) config.headers["Authorization"] = `Bearer ${accessToken}`;
-    return config;
-  });
+  // Add token to requests
+  axiosInstance.interceptors.request.use(
+    (config) => {
+      const token = localStorage.getItem("token");
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
+    }
+  );
 
-  // Refresh token on 401
+  // Handle 401 responses
   axiosInstance.interceptors.response.use(
-    (res) => res,
-    async (error) => {
+    (response) => response,
+    (error) => {
       if (error.response?.status === 401) {
-        const newToken = await refreshToken();
-        if (newToken) {
-          error.config.headers["Authorization"] = `Bearer ${newToken}`;
-          return axiosInstance(error.config);
-        }
+        // Token expired or invalid
+        localStorage.removeItem("token");
+        localStorage.removeItem("email");
+        localStorage.removeItem("role");
+        localStorage.removeItem("name");
+        setUser(null);
+        window.location.href = "/login";
       }
       return Promise.reject(error);
     }
   );
 
+  // LOGIN function
   const login = async (email, password) => {
-    try {
-      const res = await axiosInstance.post("/login", { email, password });
-      setAccessToken(res.data.token);
-      await loadProfile(res.data.token);
-    } catch (err) {
-      console.error("Login failed:", err.response?.data || err);
-      throw err;
+    const response = await axios.post(`${BASE_URL}/api/login`, {
+      email,
+      password,
+    });
+    
+    if (response.data.token) {
+      const { token, role, name } = response.data;
+      
+      // Store user data in localStorage
+      localStorage.setItem("token", token);
+      localStorage.setItem("email", email);
+      localStorage.setItem("role", role);
+      localStorage.setItem("name", name || email);
+      
+      setUser({
+        email,
+        role,
+        name: name || email,
+        token
+      });
+      
+      return response.data;
     }
   };
 
+  // LOGOUT function
   const logout = async () => {
     try {
       await axiosInstance.post("/logout");
-      setUser(null);
-      setAccessToken(null);
-    } catch (err) {
-      console.error("Logout failed:", err.response?.data || err);
-    }
-  };
-
-  const refreshToken = async () => {
-    try {
-      const res = await axios.post(`${BASE_URL}/api/refresh-token`, {}, { withCredentials: true });
-      if (res.data?.token) {
-        setAccessToken(res.data.token);
-        return res.data.token;
-      }
-      return null;
-    } catch (err) {
-      console.error("Refresh token failed:", err);
-      setUser(null);
-      setAccessToken(null);
-      return null;
-    }
-  };
-
-  const loadProfile = async (token) => {
-    try {
-      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-      const res = await axiosInstance.get("/profile", { headers });
-      setUser(res.data);
-    } catch (err) {
-      console.error("Load profile failed:", err.response?.data || err);
-      setUser(null);
+    } catch (error) {
+      console.error("Logout error:", error);
     } finally {
-      setLoading(false);
+      // Clear localStorage
+      localStorage.removeItem("token");
+      localStorage.removeItem("email");
+      localStorage.removeItem("role");
+      localStorage.removeItem("name");
+      setUser(null);
     }
   };
 
+  // LOAD USER PROFILE
+  const loadUser = async () => {
+    const token = localStorage.getItem("token");
+    const email = localStorage.getItem("email");
+    const role = localStorage.getItem("role");
+    const name = localStorage.getItem("name");
+
+    if (token && email) {
+      try {
+        // Verify token is still valid by making an API call
+        const response = await axiosInstance.get("/profile");
+        setUser({
+          ...response.data,
+          token,
+          email,
+          role,
+          name
+        });
+      } catch (error) {
+        console.error("Failed to load user profile:", error);
+        // Clear invalid tokens
+        localStorage.removeItem("token");
+        localStorage.removeItem("email");
+        localStorage.removeItem("role");
+        localStorage.removeItem("name");
+        setUser(null);
+      }
+    } else {
+      setUser(null);
+    }
+    setLoading(false);
+  };
+
+  // Check if user is logged in on app start
   useEffect(() => {
-    (async () => {
-      const token = await refreshToken();
-      if (token) await loadProfile(token);
-      else setLoading(false);
-    })();
+    loadUser();
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, logout, loading, axiosInstance }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      login, 
+      logout, 
+      loading, 
+      axiosInstance,
+      loadUser 
+    }}>
       {children}
     </AuthContext.Provider>
   );
 };
+
+export default AuthProvider;
